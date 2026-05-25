@@ -1,0 +1,151 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rag_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rag_ecommerce
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_internal
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - rag_internal
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '2'
+    # Uncomment for GPU support (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: rag_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/rag_ecommerce
+      - OLLAMA_URL=http://ollama:11434
+      - JWT_SECRET=your-secret-key-change-in-production
+      - SIMILARITY_THRESHOLD=0.65
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - rag_internal
+      - rag_public
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    container_name: rag_bot
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - rag_internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - rag_internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  appsmith:
+    image: appsmith/appsmith-ce:latest
+    container_name: rag_appsmith
+    ports:
+      - "8080:80"
+    volumes:
+      - ./data/appsmith:/appsmith-stacks
+    environment:
+      - APPSMITH_MAIL_ENABLED=false
+      - APPSMITH_DISABLE_TELEMETRY=true
+      - APPSMITH_SIGNUP_DISABLED=true
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - rag_internal
+      - rag_public
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+
+networks:
+  rag_internal:
+    internal: true
+  rag_public:
