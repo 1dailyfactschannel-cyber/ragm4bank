@@ -1,29 +1,24 @@
-version: '3.8'
-
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: rag_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: rag_ecommerce
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-rag_ecommerce}
     ports:
       - "5432:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - rag_internal
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
+    mem_limit: 512m
+    cpus: 0.5
 
   ollama:
     image: ollama/ollama:latest
@@ -33,7 +28,7 @@ services:
     volumes:
       - ./data/ollama:/root/.ollama
     environment:
-      - OLLAMA_KEEP_ALIVE=24h
+      OLLAMA_KEEP_ALIVE: 24h
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
       interval: 30s
@@ -42,19 +37,8 @@ services:
       start_period: 60s
     networks:
       - rag_internal
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-          cpus: '2'
-    # Uncomment for GPU support (NVIDIA)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    mem_limit: 8g
+    cpus: 2.0
 
   backend:
     build:
@@ -64,17 +48,22 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/rag_ecommerce
-      - OLLAMA_URL=http://ollama:11434
-      - JWT_SECRET=your-secret-key-change-in-production
-      - SIMILARITY_THRESHOLD=0.65
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-rag_ecommerce}
+      OLLAMA_URL: http://ollama:11434
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.65}
+      BOT_TOKEN: ${BOT_TOKEN}
+      BACKEND_URL: http://backend:8000
+      ADMIN_CHAT_IDS: ${ADMIN_CHAT_IDS}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
     volumes:
       - ./data/uploads:/app/data/uploads
     depends_on:
-      db:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+      - db
+      - ollama
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -84,11 +73,8 @@ services:
     networks:
       - rag_internal
       - rag_public
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '1'
+    mem_limit: 1g
+    cpus: 1.0
 
   bot:
     build:
@@ -96,18 +82,14 @@ services:
       dockerfile: bot/Dockerfile
     container_name: rag_bot
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
-      - BACKEND_URL=http://backend:8000
+      BOT_TOKEN: ${BOT_TOKEN}
+      BACKEND_URL: http://backend:8000
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
       - rag_internal
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.25'
+    mem_limit: 256m
+    cpus: 0.25
 
   redis:
     image: redis:7-alpine
@@ -116,11 +98,8 @@ services:
       - "6379:6379"
     networks:
       - rag_internal
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.25'
+    mem_limit: 256m
+    cpus: 0.25
 
   appsmith:
     image: appsmith/appsmith-ce:latest
@@ -130,20 +109,16 @@ services:
     volumes:
       - ./data/appsmith:/appsmith-stacks
     environment:
-      - APPSMITH_MAIL_ENABLED=false
-      - APPSMITH_DISABLE_TELEMETRY=true
-      - APPSMITH_SIGNUP_DISABLED=true
+      APPSMITH_MAIL_ENABLED: "false"
+      APPSMITH_DISABLE_TELEMETRY: "true"
+      APPSMITH_SIGNUP_DISABLED: "true"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
       - rag_internal
       - rag_public
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '1'
+    mem_limit: 1g
+    cpus: 1.0
 
 networks:
   rag_internal:
